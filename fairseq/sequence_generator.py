@@ -12,7 +12,6 @@ import torch
 from fairseq import search, utils
 from fairseq.models import FairseqIncrementalDecoder
 
-import pdb
 
 
 class SequenceGenerator(object):
@@ -342,7 +341,6 @@ class SequenceGenerator(object):
                     if isinstance(model.decoder, FairseqIncrementalDecoder):
                         model.decoder.reorder_incremental_state(incremental_states[model], reorder_state)
                     encoder_outs[i] = model.encoder.reorder_encoder_out(encoder_outs[i], reorder_state)
-
             lprobs, avg_attn_scores = self._decode(tokens[:, :step + 1], encoder_outs, incremental_states)
 
             lprobs[:, self.pad] = -math.inf  # never select pad
@@ -580,5 +578,8 @@ class SequenceGenerator(object):
                 if type(attn) is dict:
                     attn = attn['attn']
                 attn = attn[:, -1, :]
-        probs = model.get_normalized_probs(decoder_out, log_probs=log_probs)
+        if hasattr(model.decoder, 'discriminator'):
+            probs, adv_probs = model.get_normalized_probs(decoder_out, log_probs=log_probs)
+        else:
+            probs = model.get_normalized_probs(decoder_out, log_probs=log_probs)
         return probs, attn

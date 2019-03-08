@@ -16,11 +16,20 @@ import pdb
 
 
 def collate(
-    samples, pad_idx, eos_idx, left_pad_source=True, left_pad_target=False,
+    samples, pad_idx, eos_idx, left_pad_source=False, left_pad_target=False,
     input_feeding=True,
 ):
     if len(samples) == 0:
         return {}
+
+    if samples[0].get('target', None) is not None and samples[0]['target'].dim() == 2:
+        #assert samples[0]['target'].size(1) == 2, "only accepts a single additional feature on target side"
+        for s in samples:
+            s['target_labels'] = s['target'][:, 1:]
+            s['target'] = s['target'][:, 0]
+    else:
+        for s in samples:
+            s['target_labels'] = None
 
     def merge(key, left_pad, move_eos_to_beginning=False):
         return data_utils.collate_tokens(
@@ -37,10 +46,18 @@ def collate(
     src_tokens = src_tokens.index_select(0, sort_order)
 
     prev_output_tokens = None
+    prev_output_target_labels = None
     target = None
+    target_labels = None
+
     if samples[0].get('target', None) is not None:
         target = merge('target', left_pad=left_pad_target)
         target = target.index_select(0, sort_order)
+        if samples[0].get('target_labels', None) is not None:
+            target_labels = merge('target_labels', left_pad=left_pad_target)
+            target_labels = target_labels.index_select(0, sort_order)
+        else:
+            pass
         ntokens = sum(len(s['target']) for s in samples)
 
         if input_feeding:
@@ -52,6 +69,15 @@ def collate(
                 move_eos_to_beginning=True,
             )
             prev_output_tokens = prev_output_tokens.index_select(0, sort_order)
+            if samples[0].get('target_labels', None) is not None:
+                prev_output_target_labels = merge(
+                    'target_labels',
+                    left_pad=left_pad_target,
+                    move_eos_to_beginning=True,
+                )
+                prev_output_target_labels = prev_output_target_labels.index_select(0, sort_order)
+            else:
+                pass
     else:
         ntokens = sum(len(s['source']) for s in samples)
 
@@ -64,8 +90,11 @@ def collate(
             'src_lengths': src_lengths,
         },
         'target': target,
+        'target_labels': target_labels
     }
     if prev_output_tokens is not None:
+        batch['net_input']['prev_output_tokens'] = prev_output_tokens
+    if prev_output_target_labels is not None:
         batch['net_input']['prev_output_tokens'] = prev_output_tokens
     return batch
 
@@ -103,7 +132,7 @@ class LanguagePairDataset(FairseqDataset):
     def __init__(
         self, src, src_sizes, src_dict,
         tgt=None, tgt_sizes=None, tgt_dict=None,
-        left_pad_source=True, left_pad_target=False,
+        left_pad_source=False, left_pad_target=False,
         max_source_positions=1024, max_target_positions=1024,
         shuffle=True, input_feeding=True, remove_eos_from_source=False, append_eos_to_target=False,
     ):

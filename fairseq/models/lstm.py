@@ -165,23 +165,42 @@ class LSTMModel(FairseqModel):
                 bidirectional=args.encoder_bidirectional,
                 pretrained_embed=pretrained_encoder_embed,
             )
-        decoder = LSTMDecoder(
-            dictionary=task.target_dictionary,
-            embed_dim=args.decoder_embed_dim,
-            hidden_size=args.decoder_hidden_size,
-            out_embed_dim=args.decoder_out_embed_dim,
-            num_layers=args.decoder_layers,
-            dropout_in=args.decoder_dropout_in,
-            dropout_out=args.decoder_dropout_out,
-            attention=options.eval_bool(args.decoder_attention),
-            encoder_output_units=encoder.output_units,
-            pretrained_embed=pretrained_decoder_embed,
-            share_input_output_embed=args.share_decoder_input_output_embed,
-            adaptive_softmax_cutoff=(
-                options.eval_str_list(args.adaptive_softmax_cutoff, type=int)
-                if args.criterion == 'adaptive_loss' else None
-            ),
-        )
+        if args.criterion in ['adv_cross_entropy', 'adv_label_smoothed_cross_entropy']:
+            decoder = AdversarialLSTMDecoder(
+                dictionary=task.target_dictionary,
+                embed_dim=args.decoder_embed_dim,
+                hidden_size=args.decoder_hidden_size,
+                out_embed_dim=args.decoder_out_embed_dim,
+                num_layers=args.decoder_layers,
+                dropout_in=args.decoder_dropout_in,
+                dropout_out=args.decoder_dropout_out,
+                attention=options.eval_bool(args.decoder_attention),
+                encoder_output_units=encoder.output_units,
+                pretrained_embed=pretrained_decoder_embed,
+                share_input_output_embed=args.share_decoder_input_output_embed,
+                adaptive_softmax_cutoff=(
+                    options.eval_str_list(args.adaptive_softmax_cutoff, type=int)
+                    if args.criterion == 'adaptive_loss' else None
+                ),
+            )
+        else:
+            decoder = LSTMDecoder(
+                dictionary=task.target_dictionary,
+                embed_dim=args.decoder_embed_dim,
+                hidden_size=args.decoder_hidden_size,
+                out_embed_dim=args.decoder_out_embed_dim,
+                num_layers=args.decoder_layers,
+                dropout_in=args.decoder_dropout_in,
+                dropout_out=args.decoder_dropout_out,
+                attention=options.eval_bool(args.decoder_attention),
+                encoder_output_units=encoder.output_units,
+                pretrained_embed=pretrained_decoder_embed,
+                share_input_output_embed=args.share_decoder_input_output_embed,
+                adaptive_softmax_cutoff=(
+                    options.eval_str_list(args.adaptive_softmax_cutoff, type=int)
+                    if args.criterion == 'adaptive_loss' else None
+                ),
+            )
         return cls(encoder, decoder)
 
 
@@ -304,8 +323,11 @@ class MultiFeatLSTMEncoder(LSTMEncoder):
                          left_pad, pretrained_embed, padding_value)
         self.num_source_feats = num_source_feats
         self.skip_connect_feats = skip_connect_feats
+        self.proj = nn.Linear(embed_dim * self.num_source_feats, embed_dim)
         if self.skip_connect_feats == 1:
-            self.up_linear = nn.Linear(embed_dim, hidden_size * (2 if bidirectional else 1))
+            self.down_linear = nn.Linear(hidden_size * (2 if bidirectional else 1) +
+                                         embed_dim * (self.num_source_feats - 1),
+                                         hidden_size * (2 if bidirectional else 1))
         else:
             pass
         print('skip_connect_feats', self.skip_connect_feats)
@@ -313,15 +335,17 @@ class MultiFeatLSTMEncoder(LSTMEncoder):
     def forward(self, src_tokens, src_lengths):
         if self.left_pad:
             # convert left-padding to right-padding
+            ##print('im here im converting padding direction')
+            print('convert_padding_direction')
             src_tokens = utils.convert_padding_direction(
                 src_tokens,
                 self.padding_idx,
                 left_to_right=True,
             )
-
         assert src_tokens.dim() == 3
         bsz, seqlen, num_feat = src_tokens.size()
         ##print(bsz, seqlen, num_feat, 'batch info')
+        ##pdb.set_trace()
         assert num_feat == self.num_source_feats
         feat_tokens = [src_tokens[:, :, i] for i in range(1, num_feat)]
         src_tokens = src_tokens[:, :, 0]
@@ -335,9 +359,11 @@ class MultiFeatLSTMEncoder(LSTMEncoder):
 
         feat_x = [F.dropout(self.embed_tokens(fx).transpose(0, 1), p=self.dropout_in, training=self.training)
                   for fx in feat_tokens]
-
-        for fx in feat_x:
-            x = x + fx
+        x = [x] + feat_x
+        x = torch.cat(x, dim=2)
+        x = self.proj(x)
+        #for fx in feat_x:
+        #    x = x + fx
 
         # pack embedded source tokens into a PackedSequence
         packed_x = nn.utils.rnn.pack_padded_sequence(x, src_lengths.data.tolist())
@@ -366,8 +392,10 @@ class MultiFeatLSTMEncoder(LSTMEncoder):
 
         encoder_padding_mask = src_tokens.eq(self.padding_idx).t()
         if self.skip_connect_feats == 1:
-            for fx in feat_x:
-                x = x + self.up_linear(fx)
+            x = torch.cat([x] + feat_x, dim=2)
+            x = self.down_linear(x)
+            #for fx in feat_x:
+            #    x = x + self.up_linear(fx)
         return {
             'encoder_out': (x, final_hiddens, final_cells),
             'encoder_padding_mask': encoder_padding_mask if encoder_padding_mask.any() else None
@@ -569,6 +597,145 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         self.need_attn = need_attn
 
 
+class RGL(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+
+    def backward(self, grad):
+        return -grad
+
+
+class PositiveDiscriminator(nn.Module):
+    def __init__(self, decoder_size):
+        super().__init__()
+        self.decoder_size = decoder_size
+        self.ff = torch.nn.Linear(self.decoder_size, 2)
+
+    def forward(self, x):
+        o = self.ff(x)
+        return o
+
+
+class Discriminator(nn.Module):
+    def __init__(self, decoder_size):
+        super().__init__()
+        self.decoder_size = decoder_size
+        self.rgl = RGL()
+        self.ff = torch.nn.Linear(self.decoder_size, 2)
+
+    def forward(self, x):
+        x = self.rgl(x)
+        o = self.ff(x)
+        return o
+
+
+class AdversarialLSTMDecoder(LSTMDecoder):
+    def __init__(self, dictionary, embed_dim=512, hidden_size=512, out_embed_dim=512,
+                 num_layers=1, dropout_in=0.1, dropout_out=0.1, attention=True,
+                 encoder_output_units=512, pretrained_embed=None,
+                 share_input_output_embed=False, adaptive_softmax_cutoff=None):
+        super().__init__(dictionary, embed_dim, hidden_size, out_embed_dim,
+                         num_layers, dropout_in, dropout_out, attention, encoder_output_units,
+                         pretrained_embed, share_input_output_embed, adaptive_softmax_cutoff)
+        self.discriminator = Discriminator(hidden_size)
+
+    def forward(self, prev_output_tokens, encoder_out_dict, incremental_state=None):
+        encoder_out = encoder_out_dict['encoder_out']
+        encoder_padding_mask = encoder_out_dict['encoder_padding_mask']
+
+        if incremental_state is not None:
+            prev_output_tokens = prev_output_tokens[:, -1:]
+        bsz, seqlen = prev_output_tokens.size()
+
+        # get outputs from encoder
+        encoder_outs, encoder_hiddens, encoder_cells = encoder_out[:3]
+        srclen = encoder_outs.size(0)
+
+        # embed tokens
+        x = self.embed_tokens(prev_output_tokens)
+        x = F.dropout(x, p=self.dropout_in, training=self.training)
+
+        # B x T x C -> T x B x C
+        x = x.transpose(0, 1)
+
+        # initialize previous states (or get from cache during incremental generation)
+        cached_state = utils.get_incremental_state(self, incremental_state, 'cached_state')
+        if cached_state is not None:
+            prev_hiddens, prev_cells, input_feed = cached_state
+        else:
+            num_layers = len(self.layers)
+            prev_hiddens = [encoder_hiddens[i] for i in range(num_layers)]
+            prev_cells = [encoder_cells[i] for i in range(num_layers)]
+            if self.encoder_hidden_proj is not None:
+                prev_hiddens = [self.encoder_hidden_proj(x) for x in prev_hiddens]
+                prev_cells = [self.encoder_cell_proj(x) for x in prev_cells]
+            input_feed = x.new_zeros(bsz, self.hidden_size)
+
+        attn_scores = x.new_zeros(srclen, seqlen, bsz)
+        outs = []
+        for j in range(seqlen):
+            # input feeding: concatenate context vector from previous time step
+            input = torch.cat((x[j, :, :], input_feed), dim=1)
+
+            for i, rnn in enumerate(self.layers):
+                # recurrent cell
+                hidden, cell = rnn(input, (prev_hiddens[i], prev_cells[i]))
+
+                # hidden state becomes the input to the next layer
+                input = F.dropout(hidden, p=self.dropout_out, training=self.training)
+
+                # save state for next time step
+                prev_hiddens[i] = hidden
+                prev_cells[i] = cell
+
+            # apply attention using the last layer's hidden state
+            if self.attention is not None:
+                out, attn_scores[:, j, :] = self.attention(hidden, encoder_outs, encoder_padding_mask)
+            else:
+                out = hidden
+            out = F.dropout(out, p=self.dropout_out, training=self.training)
+
+            # input feeding
+            input_feed = out
+
+            # save final output
+            outs.append(out)
+
+        # cache previous states (no-op except during incremental generation)
+        utils.set_incremental_state(
+            self, incremental_state, 'cached_state',
+            (prev_hiddens, prev_cells, input_feed),
+        )
+
+        # collect outputs across time steps
+        x = torch.cat(outs, dim=0).view(seqlen, bsz, self.hidden_size)
+
+        # T x B x C -> B x T x C
+        x = x.transpose(1, 0)
+
+        # srclen x tgtlen x bsz -> bsz x tgtlen x srclen
+        if not self.training and self.need_attn:
+            attn_scores = attn_scores.transpose(0, 2)
+        else:
+            attn_scores = None
+
+        # project back to size of vocabulary
+        if self.adaptive_softmax is None:
+            if hasattr(self, 'additional_fc'):
+                x = self.additional_fc(x)
+                x = F.dropout(x, p=self.dropout_out, training=self.training)
+            if self.share_input_output_embed:
+                out_dist = F.linear(x, self.embed_tokens.weight)
+                out_adv = self.discriminator(x)
+            else:
+                out_dist = self.fc_out(x)
+                out_adv = self.discriminator(x)
+        return out_dist, attn_scores, out_adv
+
+
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
     nn.init.uniform_(m.weight, -0.1, 0.1)
@@ -639,6 +806,19 @@ def skipless_multifeat_lstm_architecture(args):
     lstm_wiseman_iwslt_de_en(args)
 
 
+@register_model_architecture('lstm', 'small_multifeat_lstm_wiseman_iwslt_de_en')
+def small_multifeat_lstm_architecture(args):
+    args.num_source_feats = 2
+    args.encoder_layers = getattr(args, 'encoder_layers', 1)
+    args.decoder_layers = getattr(args, 'decoder_layers', 1)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
+    args.encoder_bidirectional = True
+    args.skip_connect_feats = 0
+    lstm_wiseman_iwslt_de_en(args)
+
+
 @register_model_architecture('lstm', 'multifeat_lstm_wiseman_iwslt_de_en')
 def multifeat_lstm_wiseman_iwslt_de_en(args):
     args.num_source_feats = 2
@@ -651,10 +831,51 @@ def multifeat_lstm_wiseman_iwslt_de_en(args):
     args.skip_connect_feats = 1
     lstm_wiseman_iwslt_de_en(args)
 
+@register_model_architecture('lstm', 'med_multifeat_lstm_wiseman_iwslt_de_en')
+def med_multifeat_lstm_wiseman_iwslt_de_en(args):
+    args.num_source_feats = 2
+    args.encoder_layers = getattr(args, 'encoder_layers', 3)
+    args.decoder_layers = getattr(args, 'decoder_layers', 3)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 256)
+    args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 256)
+    args.encoder_bidirectional = True
+    args.skip_connect_feats = 1
+    lstm_wiseman_iwslt_de_en(args)
+
+@register_model_architecture('lstm', 'big_multifeat_lstm_wiseman_iwslt_de_en')
+def big_multifeat_lstm_wiseman_iwslt_de_en(args):
+    args.num_source_feats = 2
+    args.encoder_layers = getattr(args, 'encoder_layers', 4)
+    args.decoder_layers = getattr(args, 'decoder_layers', 4)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
+    args.encoder_bidirectional = True
+    args.skip_connect_feats = 1
+    lstm_wiseman_iwslt_de_en(args)
+
+@register_model_architecture('lstm', 'bidirectional_lstm_wiseman_iwslt_de_en')
+def bidirectional_lstm_wiseman_iwslt_de_en(args):
+    args.num_source_feats = 1
+    args.encoder_layers = getattr(args, 'encoder_layers', 2)
+    args.decoder_layers = getattr(args, 'decoder_layers', 2)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 512)
+    args.encoder_bidirectional = True
+    args.skip_connect_feats = 0
+    lstm_wiseman_iwslt_de_en(args)
+
+@register_model_architecture('lstm', 'basic_multifeat_lstm_wiseman_iwslt_de_en')
+def multifeat_lstm_wiseman_iwslt_de_en(args):
+    args.num_source_feats = 2
+    args.skip_connect_feats = 0
+    lstm_wiseman_iwslt_de_en(args)
 
 @register_model_architecture('lstm', 'lstm_wiseman_iwslt_de_en')
 def lstm_wiseman_iwslt_de_en(args):
-    args.dropout = getattr(args, 'dropout', 0.2)
+    args.dropout = getattr(args, 'dropout', 0.1)
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 256)
     args.encoder_dropout_in = getattr(args, 'encoder_dropout_in', 0)
     args.encoder_dropout_out = getattr(args, 'encoder_dropout_out', 0)

@@ -8,6 +8,7 @@
 import math
 import torch.nn.functional as F
 
+
 from fairseq import utils
 
 from . import FairseqCriterion, register_criterion
@@ -58,3 +59,4 @@ class CrossEntropyCriterion(FairseqCriterion):
         if sample_size != ntokens:
             agg_output['nll_loss'] = loss_sum / ntokens / math.log(2)
         return agg_output
+

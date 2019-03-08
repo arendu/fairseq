@@ -33,7 +33,8 @@ def collate_tokens(values, pad_idx, eos_idx, left_pad, move_eos_to_beginning=Fal
     def copy_tensor(src, dst):
         assert dst.numel() == src.numel()
         if move_eos_to_beginning:
-            assert src[-1] == eos_idx
+            ##assert src[-1] == eos_idx
+            assert (src[-1] == eos_idx).all().item()
             dst[0] = eos_idx
             dst[1:] = src[:-1]
         else:

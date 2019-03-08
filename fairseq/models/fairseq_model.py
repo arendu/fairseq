@@ -14,6 +14,7 @@ from . import FairseqDecoder, FairseqEncoder
 from fairseq.data import Dictionary
 
 
+
 class BaseFairseqModel(nn.Module):
     """Base class for fairseq models."""
 
@@ -182,6 +183,10 @@ class FairseqModel(BaseFairseqModel):
     def max_positions(self):
         """Maximum length supported by the model."""
         return (self.encoder.max_positions(), self.decoder.max_positions())
+
+
+class FairseqTargetLabelModel(FairseqModel):
+    pass
 
 
 class FairseqMultiModel(BaseFairseqModel):

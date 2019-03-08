@@ -8,6 +8,8 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
+import pdb
+
 
 class FairseqDecoder(nn.Module):
     """Base class for decoders."""
@@ -40,12 +42,20 @@ class FairseqDecoder(nn.Module):
             assert sample is not None and 'target' in sample
             out = self.adaptive_softmax.get_log_prob(net_output[0], sample['target'])
             return out.exp_() if not log_probs else out
-
-        logits = net_output[0].float()
-        if log_probs:
-            return F.log_softmax(logits, dim=-1)
+        if hasattr(self, 'discriminator'):
+            logits = net_output[0].float()
+            adv_logits = net_output[2].float()
+            assert adv_logits.size(-1) == 2
+            if log_probs:
+                return F.log_softmax(logits, dim=-1), F.log_softmax(adv_logits, dim=-1)
+            else:
+                return F.softmax(logits, dim=-1), F.softmax(adv_logits, dim=-1)
         else:
-            return F.softmax(logits, dim=-1)
+            logits = net_output[0].float()
+            if log_probs:
+                return F.log_softmax(logits, dim=-1)
+            else:
+                return F.softmax(logits, dim=-1)
 
     def max_positions(self):
         """Maximum input length supported by the decoder."""

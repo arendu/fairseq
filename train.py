@@ -23,6 +23,8 @@ from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 from fairseq.utils import import_user_module
 
+import pdb
+
 
 def main(args, init_distributed=False):
     import_user_module(args)
@@ -99,14 +101,23 @@ def main(args, init_distributed=False):
     lr = trainer.get_lr()
     train_meter = StopwatchMeter()
     train_meter.start()
+    prev_sum_valid_losses = float('inf')
+    no_improvement_count = 0
     valid_losses = [None]
     valid_subsets = args.valid_subset.split(',')
-    while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
+    while no_improvement_count < 3 and lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
         # train for one epoch
         train(args, trainer, task, epoch_itr)
 
         if epoch_itr.epoch % args.validate_interval == 0:
             valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+            sum_valid_losses = sum(valid_losses)
+            if sum_valid_losses < prev_sum_valid_losses:
+                prev_sum_valid_losses = sum_valid_losses
+                no_improvement_count = 0
+            else:
+                no_improvement_count += 1
+                print('not improving', no_improvement_count)
 
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
@@ -138,6 +149,7 @@ def train(args, trainer, task, epoch_itr):
     first_valid = args.valid_subset.split(',')[0]
     max_update = args.max_update or math.inf
     for i, samples in enumerate(progress, start=epoch_itr.iterations_in_epoch):
+        samples[0]['epoch_num'] = epoch_itr.epoch
         log_output = trainer.train_step(samples)
         if log_output is None:
             continue
