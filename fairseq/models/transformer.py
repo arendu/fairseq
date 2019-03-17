@@ -272,7 +272,7 @@ class TransformerEncoder(FairseqEncoder):
             (default: True).
     """
 
-    def __init__(self, args, dictionary, embed_tokens, left_pad=True):
+    def __init__(self, args, dictionary, embed_tokens, left_pad=False):
         super().__init__(dictionary)
         self.dropout = args.dropout
 
@@ -380,9 +380,10 @@ class TransformerEncoder(FairseqEncoder):
         return state_dict
 
 class MultiFeatTransformerEncoder(TransformerEncoder):
-    def __init__(self, args, dictionary, embed_tokens, left_pad=True, num_source_feats=2):
+    def __init__(self, args, dictionary, embed_tokens, left_pad=False, num_source_feats=2):
         self.num_source_feats = num_source_feats
         super().__init__(args, dictionary, embed_tokens, left_pad)
+        assert not left_pad
 
     def forward(self, src_tokens, src_lengths):
         """

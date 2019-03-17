@@ -11,9 +11,6 @@ Translate raw text with a trained model. Batches data on-the-fly.
 
 from collections import namedtuple
 import fileinput
-import sys
-
-import pdb
 
 import numpy as np
 import torch

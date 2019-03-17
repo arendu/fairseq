@@ -4,6 +4,7 @@ import math
 import torch
 import torch.nn.functional as F
 
+
 from fairseq import utils
 
 from . import FairseqCriterion, register_criterion
@@ -17,16 +18,17 @@ class AdversarialCrossEntropyCriterion(FairseqCriterion):
         self.lam = args.adv_lambda
         self.ease_in = args.adv_ease
         tgt_dict = task.target_dictionary
-        self.adv_classes = (tgt_dict.index('<en>'), tgt_dict.index('<de>'))
-        self.adv_classnames = ['en', 'de']
+        self.adv_classes = (tgt_dict.index('<' + args.source_lang + '>'),
+                            tgt_dict.index('<' + args.target_lang + '>'))
         self.use_continue_tags = False
-        if tgt_dict.index('<cde>') == 3 or tgt_dict.index('<cen>') == 3:
+        if tgt_dict.index('<c' + args.source_lang + '>') == 3 or \
+                tgt_dict.index('<c' + args.target_lang + '>') == 3:
             ##print('not detected use of continued language labels')
             self.use_continue_tags = False
         else:
             ##print('detected use of continued language labels')
-            self.continue_adv_classes = (tgt_dict.index('<cen>'), tgt_dict.index('<cde>'))
-            self.continue_adv_classenames = ['cen', 'cde']
+            self.continue_adv_classes = (tgt_dict.index('<c' + args.source_lang + '>'),
+                                         tgt_dict.index('<c' + args.target_lang + '>'))
             self.use_continue_tags = True
 
     @staticmethod
