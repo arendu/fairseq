@@ -14,7 +14,7 @@ import torch
 
 SPACE_NORMALIZER = re.compile(r"\s+")
 
-FEAT_SPILT = "|"
+FEAT_SPLIT = "|"
 
 def tokenize_line(line):
     line = SPACE_NORMALIZER.sub(" ", line)
@@ -49,7 +49,7 @@ class Tokenizer:
             line = f.readline()
             while line:
                 for word in tokenize(line):
-                    wfs = word.split(FEAT_SPILT)
+                    wfs = word.split(FEAT_SPLIT)
                     for wf in wfs:
                         counter.update([wf])
                 counter.update([eos_word])
@@ -131,11 +131,11 @@ class Tokenizer:
         if reverse_order:
             words = list(reversed(words))
         nwords = len(words)
-        num_feats = len(words[0].split(FEAT_SPILT))
+        num_feats = len(words[0].split(FEAT_SPLIT))
         ids = [torch.IntTensor(nwords + 1 if append_eos else nwords) for _ in range(num_feats)]
 
         for i, word in enumerate(words):
-            w_fs = word.split(FEAT_SPILT)
+            w_fs = word.split(FEAT_SPLIT)
             if len(w_fs) != len(ids):
                 raise BaseException("bad number of feats")
             for f_idx, w_f in enumerate(w_fs):
