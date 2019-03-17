@@ -63,8 +63,6 @@ class LSTMModel(FairseqModel):
         parser.add_argument('--share-all-embeddings', default=False, action='store_true',
                             help='share encoder, decoder and output embeddings'
                                  ' (requires shared dictionary and embed dim)')
-        parser.add_argument('--num-source-feats', default=1, action='store',
-                            help='encoder will except (BS x SEQLEN x FEAT) sized input')
 
         parser.add_argument('--skip-connect-feats', action='store', choices=[0, 1], type=int,
                             help='use skip connections and connect feats to top encoder states')
@@ -322,7 +320,7 @@ class MultiFeatLSTMEncoder(LSTMEncoder):
         assert src_tokens.dim() == 3
         bsz, seqlen, num_feat = src_tokens.size()
         ##print(bsz, seqlen, num_feat, 'batch info')
-        assert num_feat == self.num_source_feats
+        assert num_feat == self.num_source_feats, "unexpected num_feat!"
         feat_tokens = [src_tokens[:, :, i] for i in range(1, num_feat)]
         src_tokens = src_tokens[:, :, 0]
 
@@ -355,12 +353,10 @@ class MultiFeatLSTMEncoder(LSTMEncoder):
         x, _ = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=self.padding_value)
         x = F.dropout(x, p=self.dropout_out, training=self.training)
         assert list(x.size()) == [seqlen, bsz, self.output_units]
-
         if self.bidirectional:
 
             def combine_bidir(outs):
                 return outs.view(self.num_layers, 2, bsz, -1).transpose(1, 2).contiguous().view(self.num_layers, bsz, -1)
-
             final_hiddens = combine_bidir(final_hiddens)
             final_cells = combine_bidir(final_cells)
 

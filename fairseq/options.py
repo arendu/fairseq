@@ -156,6 +156,10 @@ def get_parser(desc, default_task='translation'):
                         help='pct of updates that can overflow before decreasing the loss scale')
     parser.add_argument('--user-dir', default=None,
                         help='path to a python module containing custom extensions (tasks and/or architectures)')
+    parser.add_argument("--num-source-feats", default=1, type=int,
+                        help="source num features")
+    parser.add_argument("--num-target-feats", default=1, type=int,
+                        help="target num features")
 
     # Task definitions can be found under fairseq/tasks/
     parser.add_argument('--task', metavar='TASK', default=default_task,

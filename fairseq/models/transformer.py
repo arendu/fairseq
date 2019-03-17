@@ -6,7 +6,6 @@
 # can be found in the PATENTS file in the same directory.
 
 import math
-import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -272,7 +271,7 @@ class TransformerEncoder(FairseqEncoder):
             (default: True).
     """
 
-    def __init__(self, args, dictionary, embed_tokens, left_pad=True):
+    def __init__(self, args, dictionary, embed_tokens, left_pad=False):
         super().__init__(dictionary)
         self.dropout = args.dropout
 
@@ -380,9 +379,10 @@ class TransformerEncoder(FairseqEncoder):
         return state_dict
 
 class MultiFeatTransformerEncoder(TransformerEncoder):
-    def __init__(self, args, dictionary, embed_tokens, left_pad=True, num_source_feats=2):
+    def __init__(self, args, dictionary, embed_tokens, left_pad=False, num_source_feats=2):
         self.num_source_feats = num_source_feats
         super().__init__(args, dictionary, embed_tokens, left_pad)
+        assert not left_pad
 
     def forward(self, src_tokens, src_lengths):
         """
@@ -430,9 +430,6 @@ class MultiFeatTransformerEncoder(TransformerEncoder):
         for layer in self.layers:
             x = layer(x, encoder_padding_mask)
 
-        for fx in feat_x:
-            x = x + fx
-
         if self.normalize:
             x = self.layer_norm(x)
 
@@ -440,6 +437,7 @@ class MultiFeatTransformerEncoder(TransformerEncoder):
             'encoder_out': x,  # T x B x C
             'encoder_padding_mask': encoder_padding_mask,  # B x T
         }
+
 
 class TransformerDecoder(FairseqIncrementalDecoder):
     """
