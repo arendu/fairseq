@@ -116,6 +116,7 @@ def main(args):
             if target_tokens.dim() == 2:
                 assert target_tokens.size(1) == 1
                 target_tokens = target_tokens.view(-1)
+            
             has_target = target_tokens is not None
             target_tokens = target_tokens.int().cpu() if has_target else None
 
@@ -124,7 +125,14 @@ def main(args):
                 src_str = task.dataset(args.gen_subset).src.get_original_text(sample_id)
                 target_str = task.dataset(args.gen_subset).tgt.get_original_text(sample_id)
             else:
-                src_str = src_dict.string(src_tokens, args.remove_bpe)
+                if src_tokens.dim() == 2:
+                    src_str_list = []
+                    for i in range(src_tokens.size(1)):
+                        src_str = src_dict.string(src_tokens[:, i]) #TODO: figure out if we have to remove bpe
+                        src_str_list.append(src_str.split())
+                    src_str = ' '.join(['|'.join(i) for i in zip(*src_str_list)])
+                else:
+                    src_str = src_dict.string(src_tokens, args.remove_bpe)
                 if has_target:
                     target_str = tgt_dict.string(target_tokens, args.remove_bpe, escape_unk=True)
 

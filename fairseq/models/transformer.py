@@ -56,6 +56,8 @@ class TransformerModel(FairseqModel):
                             help='dropout probability for attention weights')
         parser.add_argument('--relu-dropout', type=float, metavar='D',
                             help='dropout probability after ReLU in FFN')
+        parser.add_argument('--source-feat-dropout', type=float, metavar='D',
+                            help='dropout probability for source features (if used)')
         parser.add_argument('--encoder-embed-path', type=str, metavar='STR',
                             help='path to pre-trained encoder embedding')
         parser.add_argument('--encoder-embed-dim', type=int, metavar='N',
@@ -328,7 +330,7 @@ class TransformerEncoder(FairseqEncoder):
         """
         # embed tokens and positions
         if src_tokens.dim() == 3:
-            assert src_tokens.size(2) == 1
+            assert src_tokens.size(2) == 1, "Only 1 src feature is accepted for vanilla model"
             src_tokens = src_tokens.squeeze(2)
         x = self.embed_scale * self.embed_tokens(src_tokens)
         if self.embed_positions is not None:
@@ -419,7 +421,8 @@ class RobustTransformerEncoder(TransformerEncoder):
             self.robust_embedder = OldFLCEncoder(self.embed_tokens, embed_tokens_f, embed_tokens_l,
                                                  dropout_in=self.dropout)
         elif robust_embedder_type == 'MultiFeatEncoder':
-            self.robust_embedder = MultiFeatEncoder(self.embed_tokens)
+            self.robust_embedder = MultiFeatEncoder(self.embed_tokens,
+                                                    feat_dropout=args.source_feat_dropout)
         elif robust_embedder_type == 'CharCNNEncoder':
             self.robust_embedder = CharCNNEncoder(self.embed_tokens, self.num_source_feats)
         elif robust_embedder_type == 'VisualEncoder':
@@ -994,6 +997,7 @@ def base_architecture(args):
     args.decoder_learned_pos = getattr(args, 'decoder_learned_pos', False)
     args.attention_dropout = getattr(args, 'attention_dropout', 0.)
     args.relu_dropout = getattr(args, 'relu_dropout', 0.)
+    args.source_feat_dropout = getattr(args, 'source_feat_dropout', 0.)
     args.dropout = getattr(args, 'dropout', 0.1)
     args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', None)
     args.adaptive_softmax_dropout = getattr(args, 'adaptive_softmax_dropout', 0)
@@ -1007,7 +1011,8 @@ def base_architecture(args):
 
 @register_model_architecture('transformer', 'multifeat_transformer_iwslt_de_en')
 def multifeat_transformer_iwslt_de_en(args):
-    args.num_source_feats = 2
+    args.num_source_feats = getattr(args, 'num_source_feats', None)
+    args.source_feat_dropout = getattr(args, 'source_feat_dropout', None)
     args.robust_embedder_type = 'MultiFeatEncoder'
     transformer_iwslt_de_en(args)
 

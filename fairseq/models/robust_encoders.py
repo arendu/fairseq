@@ -6,7 +6,6 @@ from PIL import Image
 from scipy.ndimage.filters import gaussian_filter
 import numpy as np
 
-import pdb
 
 
 class SobelLayer(nn.Module):
@@ -94,8 +93,10 @@ class CharCNNEncoder(nn.Module):
 
 
 class MultiFeatEncoder(nn.Module):
-    def __init__(self, embed_tokens):
+    def __init__(self, embed_tokens, feat_dropout=0.2):
+        super(MultiFeatEncoder, self).__init__()
         self.embed_tokens = embed_tokens
+        self.feat_dropout = nn.Dropout(feat_dropout)
 
     def forward(self, src_tokens):
         assert src_tokens.dim() == 3
@@ -104,7 +105,10 @@ class MultiFeatEncoder(nn.Module):
         feat_x = [self.embed_tokens(fx) for fx in feat_tokens]
         x = self.embed_tokens(src_tokens[:, :, 0])
         for fx in feat_x:
-            x = x + fx
+            if self.training:
+                x = x + self.feat_dropout(fx)
+            else:
+                x = x + fx
         return x
 
 

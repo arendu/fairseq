@@ -101,7 +101,9 @@ def main(args, init_distributed=False):
     train_meter.start()
     valid_losses = [None]
     valid_subsets = args.valid_subset.split(',')
-    while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
+    no_improvement_counter = 0
+    best_valid_losses = float('inf')
+    while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update and no_improvement_counter <= 5:
         # train for one epoch
         train(args, trainer, task, epoch_itr)
 
@@ -114,6 +116,16 @@ def main(args, init_distributed=False):
         # save checkpoint
         if epoch_itr.epoch % args.save_interval == 0:
             save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        print(f"best valid loss: {best_valid_losses} no_improvement_counter {no_improvement_counter}")
+        curr_best_valid_losses = min(valid_losses[0], best_valid_losses)
+        if curr_best_valid_losses == best_valid_losses:
+            no_improvement_counter += 1
+            print(f"no improvement detected! {no_improvement_counter} iteration")
+        else:
+            no_improvement_counter = 0
+        best_valid_losses = min(valid_losses[0], best_valid_losses)
+
+
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 
