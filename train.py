@@ -103,7 +103,7 @@ def main(args, init_distributed=False):
     valid_subsets = args.valid_subset.split(',')
     no_improvement_counter = 0
     best_valid_losses = float('inf')
-    while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update and no_improvement_counter <= 5:
+    while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update and no_improvement_counter <= 10:
         # train for one epoch
         train(args, trainer, task, epoch_itr)
 

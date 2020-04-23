@@ -23,6 +23,7 @@ from . import (
     register_model_architecture, FLCEncoder, OldFLCEncoder, VisualEncoder, VisualEdgeEncoder, CharCNNEncoder,
     MultiFeatEncoder
 )
+import pdb
 
 
 @register_model('transformer')
@@ -404,6 +405,7 @@ class RobustTransformerEncoder(TransformerEncoder):
                  robust_embedder_type=None, robust_embedder_resource=None, edge_threshold=None):
         super().__init__(args, dictionary, embed_tokens, left_pad)
         self.num_source_feats = num_source_feats
+        self.residual_feat = False
         embed_dim = embed_tokens.embedding_dim
         assert not left_pad
         if robust_embedder_type == 'FLCEncoder':
@@ -461,6 +463,9 @@ class RobustTransformerEncoder(TransformerEncoder):
                                                      num_chars=self.num_source_feats,
                                                      edge_threshold=edge_threshold,
                                                      dropout_in=0.1)
+        elif robust_embedder_type == 'ResidualMultiFeatEncoder':
+            self.residual_feat = True
+            self.residual_gate = Linear(embed_dim , 1)
         else:
             raise NotImplementedError("unknown embed_type for RobustLSTMEncoder")
 
@@ -487,8 +492,15 @@ class RobustTransformerEncoder(TransformerEncoder):
         ##print(bsz, seqlen, num_feat, 'batch info')
         assert num_feat == self.num_source_feats, "unexpected num_feat!"
         src_tokens_f = src_tokens[:, :, 0]
-        x = self.robust_embedder(src_tokens)
+        if self.residual_feat:
+            x = self.embed_tokens(src_tokens[:, :, 0])
+            g = torch.sigmoid(self.residual_gate(self.embed_tokens(src_tokens[:, :, 1]))) #size = (bsz, seqlen, 1)
+            residual = x
+        else:
+            x = self.robust_embedder(src_tokens)
+
         x = self.embed_scale * x
+
         if self.embed_positions is not None:
             ps = self.embed_positions(src_tokens_f)
             x += ps  # self.embed_positions(src_tokens)
@@ -505,6 +517,12 @@ class RobustTransformerEncoder(TransformerEncoder):
         # encoder layers
         for layer in self.layers:
             x = layer(x, encoder_padding_mask)
+        
+        if self.residual_feat:
+            residual = residual.transpose(0, 1)
+            g = g.transpose(0, 1)
+            g = g.expand_as(residual)
+            x = (residual * g) + (x * (1.0 - g))
 
         if self.normalize:
             x = self.layer_norm(x)
@@ -1012,10 +1030,17 @@ def base_architecture(args):
 @register_model_architecture('transformer', 'multifeat_transformer_iwslt_de_en')
 def multifeat_transformer_iwslt_de_en(args):
     args.num_source_feats = getattr(args, 'num_source_feats', None)
-    args.source_feat_dropout = getattr(args, 'source_feat_dropout', None)
+    args.source_feat_dropout = getattr(args, 'source_feat_dropout', 0.0)
     args.robust_embedder_type = 'MultiFeatEncoder'
     transformer_iwslt_de_en(args)
 
+
+@register_model_architecture('transformer', 'residual_multifeat_transformer_iwslt_de_en')
+def multifeat_transformer_iwslt_de_en(args):
+    args.num_source_feats = getattr(args, 'num_source_feats', None)
+    args.source_feat_dropout = getattr(args, 'source_feat_dropout', 0.0)
+    args.robust_embedder_type = 'ResidualMultiFeatEncoder'
+    transformer_iwslt_de_en(args)
 
 @register_model_architecture('transformer', 'flc_robust_transformer')
 def flc_robust_transformer(args):
