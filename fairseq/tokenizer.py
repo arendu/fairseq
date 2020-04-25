@@ -15,7 +15,7 @@ import torch
 
 SPACE_NORMALIZER = re.compile(r"\s+")
 
-FEAT_SPLIT = "|"
+FEAT_SPLIT = "｜"
 
 def tokenize_line(line):
     line = SPACE_NORMALIZER.sub(" ", line)

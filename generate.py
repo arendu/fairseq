@@ -130,7 +130,7 @@ def main(args):
                     for i in range(src_tokens.size(1)):
                         src_str = src_dict.string(src_tokens[:, i]) #TODO: figure out if we have to remove bpe
                         src_str_list.append(src_str.split())
-                    src_str = ' '.join(['|'.join(i) for i in zip(*src_str_list)])
+                    src_str = ' '.join(['｜'.join(i) for i in zip(*src_str_list)])
                 else:
                     src_str = src_dict.string(src_tokens, args.remove_bpe)
                 if has_target:

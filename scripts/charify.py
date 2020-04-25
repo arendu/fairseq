@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 __author__ = 'arenduchintala'
 import sys
-PIPE = '|'
+PIPE = "｜"
 
 def find_ngrams(input_list, n):
     return [''.join(j) for j in zip(*[input_list[i:] for i in range(n)])]
