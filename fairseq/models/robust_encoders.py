@@ -2,6 +2,7 @@
 __author__ = 'arenduchintala'
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from PIL import Image
 from scipy.ndimage.filters import gaussian_filter
 import numpy as np
@@ -97,6 +98,7 @@ class MultiFeatEncoder(nn.Module):
         super(MultiFeatEncoder, self).__init__()
         self.embed_tokens = embed_tokens
         self.feat_dropout = nn.Dropout(feat_dropout)
+        self.feat_gate = nn.Linear(self.embed_tokens.embedding_dim , 1)
 
     def forward(self, src_tokens):
         assert src_tokens.dim() == 3
@@ -105,10 +107,11 @@ class MultiFeatEncoder(nn.Module):
         feat_x = [self.embed_tokens(fx) for fx in feat_tokens]
         x = self.embed_tokens(src_tokens[:, :, 0])
         for fx in feat_x:
+            wt_fx = F.sigmoid(self.feat_gate(fx)).expand_as(fx)
             if self.training:
-                x = x + self.feat_dropout(fx)
+                x = x + (self.feat_dropout(fx) * wt_fx)
             else:
-                x = x + fx
+                x = x + (fx * wt_fx)
         return x
 
 

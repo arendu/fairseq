@@ -1102,6 +1102,14 @@ def transformer_iwslt_de_en(args):
 def transformer_wmt_en_de(args):
     base_architecture(args)
 
+@register_model_architecture('transformer', 'multifeat_transformer_wmt_en_de')
+def multifeat_transformer_iwslt_de_en(args):
+    args.num_source_feats = getattr(args, 'num_source_feats', None)
+    args.source_feat_dropout = getattr(args, 'source_feat_dropout', 0.0)
+    args.robust_embedder_type = 'MultiFeatEncoder'
+    base_architecture(args)
+
+
 
 # parameters used in the "Attention Is All You Need" paper (Vaswani, et al, 2017)
 @register_model_architecture('transformer', 'transformer_vaswani_wmt_en_de_big')
@@ -1128,6 +1136,14 @@ def transformer_wmt_en_de_big(args):
     args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
     transformer_vaswani_wmt_en_de_big(args)
 
+
+@register_model_architecture('transformer', 'multifeat_transformer_wmt_en_de_big')
+def multifeat_transformer_iwslt_de_en(args):
+    args.num_source_feats = getattr(args, 'num_source_feats', None)
+    args.source_feat_dropout = getattr(args, 'source_feat_dropout', 0.0)
+    args.robust_embedder_type = 'MultiFeatEncoder'
+    args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
+    transformer_vaswani_wmt_en_de_big(args)
 
 # default parameters used in tensor2tensor implementation
 @register_model_architecture('transformer', 'transformer_wmt_en_de_big_t2t')
