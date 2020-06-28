@@ -1,18 +1,17 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
-# This source code is licensed under the license found in the LICENSE file in
-# the root directory of this source tree. An additional grant of patent rights
-# can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 import torch
 import torch.nn.functional as F
 
 from fairseq import utils
-
 from .conv_tbc import ConvTBC
+from fairseq.incremental_decoding_utils import with_incremental_state
 
 
+@with_incremental_state
 class LinearizedConvolution(ConvTBC):
     """An optimized version of nn.Conv1d.
 
@@ -26,6 +25,18 @@ class LinearizedConvolution(ConvTBC):
         super().__init__(in_channels, out_channels, kernel_size, **kwargs)
         self._linearized_weight = None
         self.register_backward_hook(self._clear_linearized_weight)
+
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        state = ConvTBC.state_dict(self, destination, prefix, keep_vars=keep_vars)
+        # don't store redundant _linearized_weight in checkpoints
+        if prefix + '_linearized_weight' in state:
+            del state[prefix + '_linearized_weight']
+        return state
+
+    def upgrade_state_dict_named(self, state_dict, name):
+        prefix = name + '.' if name != '' else ''
+        if prefix + '_linearized_weight' in state_dict:
+            del state_dict[prefix + '_linearized_weight']
 
     def forward(self, input, incremental_state=None):
         """
@@ -82,7 +93,7 @@ class LinearizedConvolution(ConvTBC):
             kw = self.kernel_size[0]
             weight = self.weight.transpose(2, 1).transpose(1, 0).contiguous()
             assert weight.size() == (self.out_channels, kw, self.in_channels)
-            self._linearized_weight = weight.view(self.out_channels, -1)
+            self._linearized_weight = torch.nn.Parameter(weight.view(self.out_channels, -1))
         return self._linearized_weight
 
     def _clear_linearized_weight(self, *args):

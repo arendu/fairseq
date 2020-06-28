@@ -1,21 +1,18 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
-# This source code is licensed under the license found in the LICENSE file in
-# the root directory of this source tree. An additional grant of patent rights
-# can be found in the PATENTS file in the same directory.
-
-import math
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 import torch
+
+from fairseq import utils
 
 
 class FairseqOptimizer(object):
 
-    def __init__(self, args, params):
+    def __init__(self, args):
         super().__init__()
         self.args = args
-        self.params = list(params)
 
     @staticmethod
     def add_args(parser):
@@ -40,6 +37,16 @@ class FairseqOptimizer(object):
         different learning rate.
         """
         raise NotImplementedError
+
+    @property
+    def params(self):
+        """Return an iterable of the parameters held by the optimizer."""
+        for param_group in self.optimizer.param_groups:
+            for p in param_group['params']:
+                yield p
+
+    def __getstate__(self):
+        return self._optimizer.__getstate__()
 
     def get_lr(self):
         """Return the current learning rate."""
@@ -79,12 +86,9 @@ class FairseqOptimizer(object):
             if p.grad is not None:
                 p.grad.data.mul_(c)
 
-    def clip_grad_norm(self, max_norm):
+    def clip_grad_norm(self, max_norm, aggregate_norm_fn=None):
         """Clips gradient norm."""
-        if max_norm > 0:
-            return torch.nn.utils.clip_grad_norm_(self.params, max_norm)
-        else:
-            return math.sqrt(sum(p.grad.data.norm()**2 for p in self.params if p.grad is not None))
+        return utils.clip_grad_norm_(self.params, max_norm, aggregate_norm_fn)
 
     def step(self, closure=None):
         """Performs a single optimization step."""
@@ -92,4 +96,25 @@ class FairseqOptimizer(object):
 
     def zero_grad(self):
         """Clears the gradients of all optimized parameters."""
+        for p in self.params:
+            p.grad = None
         self.optimizer.zero_grad()
+
+    @property
+    def supports_memory_efficient_fp16(self):
+        if hasattr(self.optimizer, 'supports_memory_efficient_fp16'):
+            return self.optimizer.supports_memory_efficient_fp16
+        return False
+
+    @property
+    def supports_flat_params(self):
+        """
+        Whether the optimizer supports collapsing of the model
+        parameters/gradients into a single contiguous Tensor.
+        """
+        if hasattr(self.optimizer, 'supports_flat_params'):
+            return self.optimizer.supports_flat_params
+        return False
+
+    def average_params(self):
+        pass

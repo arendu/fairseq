@@ -1,13 +1,12 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
-# This source code is licensed under the license found in the LICENSE file in
-# the root directory of this source tree. An additional grant of patent rights
-# can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 
 import torch
 from torch import nn
+from fairseq.modules.quant_noise import quant_noise
 
 from typing import List
 
@@ -22,6 +21,8 @@ class AdaptiveInput(nn.Module):
         factor: float,
         output_dim: int,
         cutoff: List[int],
+        q_noise: float = 0,
+        qn_block_size: int = 8,
     ):
         super().__init__()
 
@@ -41,10 +42,13 @@ class AdaptiveInput(nn.Module):
             size = self.cutoff[i] - prev
             dim = int(initial_dim // (factor ** i))
             seq = nn.Sequential(
-                nn.Embedding(size, dim, padding_idx),
-                nn.Linear(dim, output_dim, bias=False)
+                nn.Embedding(size, dim, self.padding_idx),
+                quant_noise(nn.Linear(dim, output_dim, bias=False), q_noise, qn_block_size),
             )
+
             self.embeddings.append(seq)
+            self.padding_idx = None
+        self.padding_idx = padding_idx
 
         def init_weights(m):
             if isinstance(m, nn.Embedding):

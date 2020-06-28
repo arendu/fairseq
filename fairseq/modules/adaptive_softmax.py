@@ -1,15 +1,14 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
-# This source code is licensed under the license found in the LICENSE file in
-# the root directory of this source tree. An additional grant of patent rights
-# can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 import operator
 import functools
 
 import torch
 import torch.nn.functional as F
+from fairseq.modules.quant_noise import quant_noise
 from torch import nn
 
 
@@ -24,19 +23,19 @@ class TiedLinear(nn.Module):
 
 
 class TiedHeadModule(nn.Module):
-    def __init__(self, weights, input_dim, num_classes):
+    def __init__(self, weights, input_dim, num_classes, q_noise, qn_block_size):
         super().__init__()
         tied_emb, _ = weights
         self.num_words, emb_dim = tied_emb.size()
 
-        self.word_proj = TiedLinear(tied_emb, transpose=False)
+        self.word_proj = quant_noise(TiedLinear(tied_emb, transpose=False), q_noise, qn_block_size)
         if input_dim != emb_dim:
             self.word_proj = nn.Sequential(
-                nn.Linear(input_dim, emb_dim, bias=False),
+                quant_noise(nn.Linear(input_dim, emb_dim, bias=False), q_noise, qn_block_size),
                 self.word_proj,
             )
 
-        self.class_proj = nn.Linear(input_dim, num_classes, bias=False)
+        self.class_proj = quant_noise(nn.Linear(input_dim, num_classes, bias=False), q_noise, qn_block_size)
         self.out_dim = self.num_words + num_classes
 
         self.register_buffer('_float_tensor', torch.FloatTensor(1))
@@ -56,7 +55,7 @@ class AdaptiveSoftmax(nn.Module):
     approximation for GPUs" (http://arxiv.org/abs/1609.04309).
     """
 
-    def __init__(self, vocab_size, input_dim, cutoff, dropout, factor=4., adaptive_inputs=None, tie_proj=False):
+    def __init__(self, vocab_size, input_dim, cutoff, dropout, factor=4., adaptive_inputs=None, tie_proj=False, q_noise=0, qn_block_size=8):
         super().__init__()
 
         if vocab_size > cutoff[-1]:
@@ -72,15 +71,17 @@ class AdaptiveSoftmax(nn.Module):
         self.dropout = dropout
         self.input_dim = input_dim
         self.factor = factor
+        self.q_noise = q_noise
+        self.qn_block_size = qn_block_size
 
         self.lsm = nn.LogSoftmax(dim=1)
 
         if adaptive_inputs is not None:
-            self.head = TiedHeadModule(adaptive_inputs.weights_for_band(0), input_dim, len(cutoff) - 1)
+            self.head = TiedHeadModule(adaptive_inputs.weights_for_band(0), input_dim, len(cutoff) - 1, self.q_noise, self.qn_block_size)
         else:
-            self.head = nn.Linear(input_dim, output_dim, bias=False)
+            self.head = quant_noise(nn.Linear(input_dim, output_dim, bias=False), self.q_noise, self.qn_block_size)
 
-        self._make_tail(True, adaptive_inputs, tie_proj)
+        self._make_tail(adaptive_inputs, tie_proj)
 
         def init_weights(m):
             if hasattr(m, 'weight') and not isinstance(m, TiedLinear) and not isinstance(m, TiedHeadModule):
@@ -89,33 +90,32 @@ class AdaptiveSoftmax(nn.Module):
         self.apply(init_weights)
 
         self.register_buffer('version', torch.LongTensor([1]))
-        # versions prior to 1 had a bug that offset indices on the head by 1
-        self.buggy_offset = 0
 
-    def _make_tail(self, fix_exponent, adaptive_inputs=None, tie_proj=False):
-        extra_denom = 1 if fix_exponent else 0
-
+    def _make_tail(self, adaptive_inputs=None, tie_proj=False):
         self.tail = nn.ModuleList()
         for i in range(len(self.cutoff) - 1):
-            dim = int(self.input_dim // self.factor ** (i + extra_denom))
+            dim = int(self.input_dim // self.factor ** (i + 1))
 
             tied_emb, tied_proj = adaptive_inputs.weights_for_band(i + 1) \
                 if adaptive_inputs is not None else (None, None)
 
             if tied_proj is not None:
                 if tie_proj:
-                    proj = TiedLinear(tied_proj, transpose=True)
+                    proj = quant_noise(TiedLinear(tied_proj, transpose=True), self.q_noise, self.qn_block_size)
                 else:
-                    proj = nn.Linear(tied_proj.size(0), tied_proj.size(1), bias=False)
+                    proj = quant_noise(nn.Linear(tied_proj.size(0), tied_proj.size(1), bias=False), self.q_noise, self.qn_block_size)
             else:
-                proj = nn.Linear(self.input_dim, dim, bias=False)
+                proj = quant_noise(nn.Linear(self.input_dim, dim, bias=False), self.q_noise, self.qn_block_size)
+
+            if tied_emb is None:
+                out_proj = nn.Linear(dim, self.cutoff[i + 1] - self.cutoff[i], bias=False)
+            else:
+                out_proj = TiedLinear(tied_emb, transpose=False)
 
             m = nn.Sequential(
                 proj,
                 nn.Dropout(self.dropout),
-                nn.Linear(
-                    dim, self.cutoff[i + 1] - self.cutoff[i], bias=False,
-                ) if tied_emb is None else TiedLinear(tied_emb, transpose=False),
+                quant_noise(out_proj, self.q_noise, self.qn_block_size),
             )
 
             self.tail.append(m)
@@ -123,9 +123,7 @@ class AdaptiveSoftmax(nn.Module):
     def upgrade_state_dict_named(self, state_dict, name):
         version_name = name + '.version'
         if version_name not in state_dict:
-            self.buggy_offset = 1
-            self._make_tail(False)
-            state_dict[version_name] = torch.LongTensor([1])
+            raise Exception('This version of the model is no longer supported')
 
     def adapt_target(self, target):
         """
@@ -141,7 +139,7 @@ class AdaptiveSoftmax(nn.Module):
 
         for i in range(len(self.cutoff) - 1):
             mask = target.ge(self.cutoff[i]).mul(target.lt(self.cutoff[i + 1]))
-            new_target[0][mask] = self.cutoff[0] + i - self.buggy_offset
+            new_target[0][mask] = self.cutoff[0] + i
 
             if mask.any():
                 target_idxs.append(mask.nonzero().squeeze(1))
@@ -194,7 +192,7 @@ class AdaptiveSoftmax(nn.Module):
 
         head_sz = self.cutoff[0] + len(self.tail)
         log_probs[:, :head_sz] = self.lsm(head_y)
-        tail_priors = log_probs[:, self.cutoff[0] - self.buggy_offset: head_sz - self.buggy_offset].clone()
+        tail_priors = log_probs[:, self.cutoff[0]: head_sz].clone()
 
         for i in range(len(self.tail)):
             start = self.cutoff[i]
