@@ -33,6 +33,7 @@ from torch import Tensor
 
 DEFAULT_MAX_SOURCE_POSITIONS = 1024
 DEFAULT_MAX_TARGET_POSITIONS = 1024
+DEPTH_REC_STUFF=0
 
 
 @register_model("transformer")
