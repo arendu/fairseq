@@ -172,6 +172,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
                             help='block size of quantization noise at training time')
         parser.add_argument('--quant-noise-scalar', type=float, metavar='D', default=0,
                             help='scalar quantization noise and scalar quantization at training time')
+        parser.add_argument('--use-bidirectional-pos-enc', type=int , metavar='D', default=0,
+                            help='test feature')
         # fmt: on
 
     @classmethod
@@ -311,6 +313,7 @@ class TransformerEncoder(FairseqEncoder):
 
         self.dropout = args.dropout
         self.encoder_layerdrop = args.encoder_layerdrop
+        self.use_bidirectional_pos_enc = args.use_bidirectional_pos_enc
 
         embed_dim = embed_tokens.embedding_dim
         self.padding_idx = embed_tokens.padding_idx
@@ -330,6 +333,27 @@ class TransformerEncoder(FairseqEncoder):
             if not args.no_token_positional_embeddings
             else None
         )
+        if self.use_bidirectional_pos_enc == 5:
+            self.embed_positions_1st_half = (
+                PositionalEmbedding(
+                    args.max_source_positions,
+                    embed_dim//2,
+                    self.padding_idx,
+                    learned=args.encoder_learned_pos,
+                )
+                if not args.no_token_positional_embeddings
+                else None
+            )
+            self.embed_positions_2nd_half = (
+                PositionalEmbedding(
+                    args.max_source_positions,
+                    embed_dim//2,
+                    self.padding_idx,
+                    learned=args.encoder_learned_pos,
+                )
+                if not args.no_token_positional_embeddings
+                else None
+            )
 
         if not args.adaptive_input and args.quant_noise_pq > 0:
             self.quant_noise = apply_quant_noise_(
@@ -361,11 +385,65 @@ class TransformerEncoder(FairseqEncoder):
     def build_encoder_layer(self, args):
         return TransformerEncoderLayer(args)
 
-    def forward_embedding(self, src_tokens):
+    def forward_embedding(self, src_tokens, src_lengths):
         # embed tokens and positions
         x = embed = self.embed_scale * self.embed_tokens(src_tokens)
         if self.embed_positions is not None:
-            x = embed + self.embed_positions(src_tokens)
+            pos_embed = self.embed_positions(src_tokens)
+            if self.use_bidirectional_pos_enc == 1:
+                split = pos_embed.shape[2] // 2
+                pos_embed_top = pos_embed[:, :, :split]
+                pos_embed_bottom = pos_embed[:, :, split:]
+                if src_lengths[0] == src_lengths[1]:
+                    pos_embed_bottom = torch.flip(pos_embed_bottom, (1,))
+                else:
+                    for r, l in enumerate(src_lengths):
+                        l = l.item()
+                        pos_embed_bottom[r, 0:l, :] = pos_embed_bottom[r, 0:l, :].flip(0)
+                pos_embed = torch.cat([pos_embed_top, pos_embed_bottom], dim=2)
+            elif self.use_bidirectional_pos_enc == 2:
+                split = pos_embed.shape[2] // 2
+                pos_embed_top = pos_embed[:, :, :split]
+                pos_embed_bottom = pos_embed[:, :, split:]
+                zeros_bottom = torch.zeros_like(pos_embed_bottom)
+                pos_embed = torch.cat([pos_embed_top, zeros_bottom], dim=2)
+            elif self.use_bidirectional_pos_enc == 3:
+                pos_embed = self.embed_positions(src_tokens)
+                pos_embed_rev = self.embed_positions(src_tokens)
+                if src_lengths[0] == src_lengths[1]:
+                    pos_embed_rev = torch.flip(pos_embed_rev, (1,))
+                else:
+                    for r, l in enumerate(src_lengths):
+                        l = l.item()
+                        pos_embed_rev[r, 0:l, :] = pos_embed_rev[r, 0:l, :].flip(0)
+                pos_embed += pos_embed_rev
+            elif self.use_bidirectional_pos_enc == 4:
+                pos_embed = self.embed_positions(src_tokens)
+                pos_embed = torch.flip(pos_embed, (1,))
+            elif self.use_bidirectional_pos_enc == 5:
+                pos_embed_top = self.embed_positions_1st_half(src_tokens)
+                pos_embed_bottom = self.embed_positions_2nd_half(src_tokens)
+                if src_lengths[0] == src_lengths[1]:
+                    pos_embed_bottom = torch.flip(pos_embed_bottom, (1,))
+                else:
+                    for r, l in enumerate(src_lengths):
+                        l = l.item()
+                        pos_embed_bottom[r, 0:l, :] = pos_embed_bottom[r, 0:l, :].flip(0)
+                pos_embed = torch.cat([pos_embed_top, pos_embed_bottom], dim=2)
+            elif self.use_bidirectional_pos_enc == 6:
+                pos_embed = self.embed_positions(src_tokens)
+                pos_embed_top = pos_embed[:, :, ::2]
+                pos_embed_bottom = pos_embed[:, :, 1::2]
+                if src_lengths[0] == src_lengths[1]:
+                    pos_embed_bottom = torch.flip(pos_embed_bottom, (1,))
+                else:
+                    for r, l in enumerate(src_lengths):
+                        l = l.item()
+                        pos_embed_bottom[r, 0:l, :] = pos_embed_bottom[r, 0:l, :].flip(0)
+                pos_embed = torch.cat([pos_embed_top, pos_embed_bottom], dim=2)
+            else:
+                pass
+            x = embed + pos_embed
         if self.layernorm_embedding is not None:
             x = self.layernorm_embedding(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -395,7 +473,7 @@ class TransformerEncoder(FairseqEncoder):
                   hidden states of shape `(src_len, batch, embed_dim)`.
                   Only populated if *return_all_hiddens* is True.
         """
-        x, encoder_embedding = self.forward_embedding(src_tokens)
+        x, encoder_embedding = self.forward_embedding(src_tokens, src_lengths)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
